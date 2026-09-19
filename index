@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>WEBP 動圖瀏覽器</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#1a1d24; --text:#eee; --muted:#9aa0aa; --accent:#5b8cff;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){ --bg:#f5f6f8; --panel:#ffffff; --text:#1a1a1a; --muted:#666; --accent:#3366ff; }
+  }
+  :root[data-theme="dark"]{ --bg:#0f1115; --panel:#1a1d24; --text:#eee; --muted:#9aa0aa; --accent:#5b8cff; }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    height:100vh; display:flex; flex-direction:column; overflow:hidden;
+  }
+  header{
+    padding:10px 16px; background:var(--panel); display:flex; align-items:center; gap:12px;
+    flex-wrap:wrap; border-bottom:1px solid rgba(128,128,128,.2);
+  }
+  header h1{ font-size:15px; margin:0; font-weight:600; white-space:nowrap; }
+  .spacer{flex:1}
+  label.btn, button{
+    background:var(--accent); color:#fff; border:none; padding:8px 14px; border-radius:8px;
+    font-size:13px; cursor:pointer; white-space:nowrap;
+  }
+  button:disabled{ opacity:.4; cursor:default; }
+  button.secondary{ background:transparent; color:var(--text); border:1px solid rgba(128,128,128,.4); }
+  input[type=file]{ display:none; }
+  #status{ color:var(--muted); font-size:12px; }
+
+  main{
+    flex:1; display:flex; align-items:center; justify-content:center; position:relative;
+    overflow:hidden; touch-action:pan-y;
+  }
+  #stage{
+    max-width:100%; max-height:100%; display:flex; align-items:center; justify-content:center;
+    width:100%; height:100%; position:relative;
+  }
+  #stage img{
+    max-width:100%; max-height:100%; object-fit:contain; user-select:none;
+    box-shadow:0 4px 24px rgba(0,0,0,.3);
+    transition:transform .15s ease;
+  }
+  #stage.rot90 img, #stage.rot270 img{
+    max-width:100vh; max-height:100vw;
+  }
+  .rotate-controls{
+    position:absolute; top:10px; right:10px; display:flex; gap:6px; z-index:2;
+  }
+  .rotate-controls button{
+    background:rgba(0,0,0,.45); color:#fff; border:none; width:34px; height:34px;
+    border-radius:50%; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+    padding:0;
+  }
+  .rotate-controls button:hover{ background:rgba(0,0,0,.65); }
+  .rotate-controls .divider{ width:1px; background:rgba(255,255,255,.3); margin:4px 2px; }
+
+  main.zoomed .nav-zone{ pointer-events:none; }
+  #stage img.zoomable{ cursor:zoom-in; }
+  #stage.can-pan img{ cursor:grab; }
+  #stage.panning img{ cursor:grabbing; }
+  .nav-zone{
+    position:absolute; top:0; bottom:0; width:12%; display:flex; align-items:center;
+    justify-content:center; cursor:pointer; opacity:0; transition:opacity .2s; font-size:28px;
+    color:#fff; background:linear-gradient(90deg, rgba(0,0,0,.22), transparent);
+  }
+  .nav-zone.right{ right:0; background:linear-gradient(270deg, rgba(0,0,0,.22), transparent); }
+  .nav-zone:hover{ opacity:1; }
+  #empty{ color:var(--muted); text-align:center; padding:20px; line-height:1.8; }
+  #empty b{ color:var(--text); }
+
+  /* 全螢幕沉浸模式：上下工具列可自動隱藏 */
+  body.fs #thumbs{ display:none; }
+  body.fs header, body.fs footer{
+    position:fixed; left:0; right:0; z-index:20;
+    transition: transform .25s ease, opacity .25s ease;
+  }
+  body.fs header{ top:0; }
+  body.fs footer{ bottom:0; }
+  body.fs.bars-hidden header{ transform:translateY(-100%); opacity:0; pointer-events:none; }
+  body.fs.bars-hidden footer{ transform:translateY(100%); opacity:0; pointer-events:none; }
+
+  footer{
+    padding:8px 16px; background:var(--panel); display:flex; align-items:center; gap:12px;
+    border-top:1px solid rgba(128,128,128,.2); font-size:12px; color:var(--muted);
+  }
+  #filename{ color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  #counter{ white-space:nowrap; }
+  #progress{ flex:1; height:4px; background:rgba(128,128,128,.25); border-radius:2px; overflow:hidden; }
+  #progressBar{ height:100%; background:var(--accent); width:0%; transition:width .1s; }
+
+  #thumbs{
+    display:flex; gap:6px; overflow-x:auto; padding:8px 16px; background:var(--panel);
+    border-top:1px solid rgba(128,128,128,.2);
+  }
+  #thumbs img{
+    width:52px; height:52px; object-fit:cover; border-radius:6px; cursor:pointer; opacity:.5;
+    border:2px solid transparent; flex-shrink:0;
+  }
+  #thumbs img.active{ opacity:1; border-color:var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🖼️ WEBP 動圖瀏覽器</h1>
+  <label class="btn" for="folderInput">選擇資料夾</label>
+  <input id="folderInput" type="file" webkitdirectory directory multiple>
+  <label class="btn secondary" for="fileInput">或選多個檔案</label>
+  <input id="fileInput" type="file" multiple accept="image/*">
+  <span class="spacer"></span>
+  <span id="status">尚未載入圖片</span>
+</header>
+
+<main id="mainEl">
+  <div id="stage">
+    <div id="empty">
+      👆 點上方「選擇資料夾」載入整個資料夾的圖片<br>
+      <b>支援動態 WEBP、PNG、JPG、GIF</b><br>
+      載入後可用 ← → 鍵、滑鼠滾輪、或點畫面左右側翻頁
+    </div>
+  </div>
+  <div class="nav-zone left" id="prevZone">‹</div>
+  <div class="nav-zone right" id="nextZone">›</div>
+  <div class="rotate-controls">
+    <button id="rotLeftBtn" title="逆時針旋轉 (快捷鍵 R)">⟲</button>
+    <button id="rotRightBtn" title="順時針旋轉 (快捷鍵 Shift+R)">⟳</button>
+    <div class="divider"></div>
+    <button id="zoomOutBtn" title="縮小 (快捷鍵 -)">−</button>
+    <button id="zoomInBtn" title="放大 (快捷鍵 +)">+</button>
+    <button id="zoomResetBtn" title="重設縮放 (快捷鍵 0)">⤢</button>
+    <div class="divider"></div>
+    <button id="fullscreenBtn" title="全螢幕 (快捷鍵 F)">⛶</button>
+  </div>
+</main>
+
+<footer>
+  <button class="secondary" id="prevBtn" disabled>◀ 上一張</button>
+  <span id="filename"></span>
+  <div id="progress"><div id="progressBar"></div></div>
+  <span id="counter"></span>
+  <button id="nextBtn" disabled>下一張 ▶</button>
+</footer>
+
+<div id="thumbs"></div>
+
+<script>
+(function(){
+  let files = [];
+  let urls = [];
+  let index = 0;
+  let rotations = []; // 每張圖片各自的旋轉角度 (0/90/180/270)
+  let scale = 1, tx = 0, ty = 0; // 縮放與平移，切換圖片時重設
+  const mainEl = document.getElementById('mainEl');
+
+  const stage = document.getElementById('stage');
+  const empty = document.getElementById('empty');
+  const filenameEl = document.getElementById('filename');
+  const counterEl = document.getElementById('counter');
+  const progressBar = document.getElementById('progressBar');
+  const statusEl = document.getElementById('status');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const thumbsEl = document.getElementById('thumbs');
+
+  const IMG_RE = /\.(webp|png|jpe?g|gif|bmp|avif)$/i;
+
+  function naturalSort(a,b){
+    return a.name.localeCompare(b.name, undefined, {numeric:true, sensitivity:'base'});
+  }
+
+  function loadFiles(fileList){
+    const arr = Array.from(fileList).filter(f => IMG_RE.test(f.name));
+    if(arr.length === 0){
+      statusEl.textContent = '找不到圖片檔案 (webp/png/jpg/gif)';
+      return;
+    }
+    arr.sort(naturalSort);
+    // revoke old urls
+    urls.forEach(u => URL.revokeObjectURL(u));
+    files = arr;
+    urls = files.map(f => URL.createObjectURL(f));
+    rotations = files.map(() => 0);
+    index = 0;
+    statusEl.textContent = `已載入 ${files.length} 張圖片`;
+    buildThumbs();
+    render();
+    prevBtn.disabled = false;
+    nextBtn.disabled = false;
+  }
+
+  function buildThumbs(){
+    thumbsEl.innerHTML = '';
+    urls.forEach((u,i) => {
+      const im = document.createElement('img');
+      im.src = u;
+      im.title = files[i].name;
+      im.addEventListener('click', () => { index = i; render(); });
+      thumbsEl.appendChild(im);
+    });
+  }
+
+  function render(){
+    if(files.length === 0) return;
+    empty.style.display = 'none';
+    stage.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = urls[index];
+    img.alt = files[index].name;
+    img.className = 'zoomable';
+    stage.appendChild(img);
+    scale = 1; tx = 0; ty = 0;
+    applyTransform();
+    bindDrag(img);
+
+    filenameEl.textContent = files[index].name;
+    counterEl.textContent = `${index+1} / ${files.length}`;
+    progressBar.style.width = ((index+1)/files.length*100) + '%';
+
+    [...thumbsEl.children].forEach((el,i) => {
+      el.classList.toggle('active', i === index);
+      if(i === index) el.scrollIntoView({inline:'center', block:'nearest', behavior:'smooth'});
+    });
+
+    prevBtn.disabled = index === 0;
+    nextBtn.disabled = index === files.length - 1;
+  }
+
+  function next(){ if(index < files.length - 1){ index++; render(); } }
+  function prev(){ if(index > 0){ index--; render(); } }
+
+  function applyTransform(){
+    const img = stage.querySelector('img');
+    if(!img) return;
+    const deg = rotations[index] || 0;
+    img.style.transform = `translate(${tx}px, ${ty}px) rotate(${deg}deg) scale(${scale})`;
+    stage.classList.toggle('rot90', deg === 90 || deg === 270);
+    stage.classList.toggle('can-pan', scale > 1);
+    mainEl.classList.toggle('zoomed', scale > 1);
+  }
+  function rotate(delta){
+    if(files.length === 0) return;
+    rotations[index] = ((rotations[index] || 0) + delta + 360) % 360;
+    applyTransform();
+  }
+  function setZoom(newScale){
+    scale = Math.min(4, Math.max(1, newScale));
+    if(scale === 1){ tx = 0; ty = 0; }
+    applyTransform();
+  }
+  function zoomBy(delta){ setZoom(scale + delta); }
+
+  document.getElementById('zoomInBtn').addEventListener('click', () => zoomBy(0.5));
+  document.getElementById('zoomOutBtn').addEventListener('click', () => zoomBy(-0.5));
+  document.getElementById('zoomResetBtn').addEventListener('click', () => setZoom(1));
+
+  stage.addEventListener('dblclick', () => setZoom(scale > 1 ? 1 : 2));
+
+  // Ctrl/Cmd + 滾輪縮放；一般滾輪維持翻頁行為
+  stage.addEventListener('wheel', e => {
+    if(e.ctrlKey || e.metaKey){
+      e.preventDefault();
+      zoomBy(e.deltaY < 0 ? 0.25 : -0.25);
+    }
+  }, {passive:false});
+
+  // 拖曳平移（放大時）
+  function bindDrag(img){
+    let dragging = false, startX, startY, startTx, startTy;
+    img.addEventListener('mousedown', e => {
+      if(scale <= 1) return;
+      dragging = true; stage.classList.add('panning');
+      startX = e.clientX; startY = e.clientY; startTx = tx; startTy = ty;
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', e => {
+      if(!dragging) return;
+      tx = startTx + (e.clientX - startX);
+      ty = startTy + (e.clientY - startY);
+      applyTransform();
+    });
+    window.addEventListener('mouseup', () => { dragging = false; stage.classList.remove('panning'); });
+  }
+
+  // 全螢幕
+  document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
+  function toggleFullscreen(){
+    if(!document.fullscreenElement){
+      (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)
+        .call(document.documentElement);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    }
+  }
+
+  // 全螢幕沉浸模式：無動作時自動隱藏上下工具列
+  let hideTimer = null;
+  function showBars(){
+    document.body.classList.remove('bars-hidden');
+    clearTimeout(hideTimer);
+    if(document.fullscreenElement){
+      hideTimer = setTimeout(() => document.body.classList.add('bars-hidden'), 2500);
+    }
+  }
+  document.addEventListener('fullscreenchange', () => {
+    const isFs = !!document.fullscreenElement;
+    document.body.classList.toggle('fs', isFs);
+    if(isFs) showBars(); else { document.body.classList.remove('bars-hidden'); clearTimeout(hideTimer); }
+  });
+  document.addEventListener('mousemove', showBars);
+  document.addEventListener('touchstart', showBars, {passive:true});
+
+  document.getElementById('rotLeftBtn').addEventListener('click', () => rotate(-90));
+  document.getElementById('rotRightBtn').addEventListener('click', () => rotate(90));
+
+  document.getElementById('folderInput').addEventListener('change', e => loadFiles(e.target.files));
+  document.getElementById('fileInput').addEventListener('change', e => loadFiles(e.target.files));
+  prevBtn.addEventListener('click', prev);
+  nextBtn.addEventListener('click', next);
+  document.getElementById('prevZone').addEventListener('click', prev);
+  document.getElementById('nextZone').addEventListener('click', next);
+
+  document.addEventListener('keydown', e => {
+    if(e.key === 'ArrowRight') next();
+    if(e.key === 'ArrowLeft') prev();
+    if(e.key === 'r' || e.key === 'R'){ e.shiftKey ? rotate(90) : rotate(-90); }
+    if(e.key === '+' || e.key === '=') zoomBy(0.5);
+    if(e.key === '-' || e.key === '_') zoomBy(-0.5);
+    if(e.key === '0') setZoom(1);
+    if(e.key === 'f' || e.key === 'F') toggleFullscreen();
+  });
+
+  let wheelLock = false;
+  document.querySelector('main').addEventListener('wheel', e => {
+    if(e.ctrlKey || e.metaKey) return; // 交給縮放處理
+    if(wheelLock) return;
+    wheelLock = true;
+    setTimeout(()=>wheelLock=false, 250);
+    if(e.deltaY > 10 || e.deltaX > 10) next();
+    else if(e.deltaY < -10 || e.deltaX < -10) prev();
+  });
+
+  // touch: 單指滑動翻頁(未縮放時)／單指拖曳平移(已縮放時)／雙指縮放
+  let touchStartX = null, touchStartY = null;
+  let pinchStartDist = null, pinchStartScale = 1;
+  let panStartTx = 0, panStartTy = 0;
+
+  function touchDist(t){
+    const dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY;
+    return Math.hypot(dx, dy);
+  }
+
+  document.querySelector('main').addEventListener('touchstart', e => {
+    if(e.touches.length === 2){
+      pinchStartDist = touchDist(e.touches);
+      pinchStartScale = scale;
+    } else if(e.touches.length === 1){
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      panStartTx = tx; panStartTy = ty;
+    }
+  }, {passive:true});
+
+  document.querySelector('main').addEventListener('touchmove', e => {
+    if(e.touches.length === 2 && pinchStartDist){
+      e.preventDefault();
+      const newDist = touchDist(e.touches);
+      setZoom(pinchStartScale * (newDist / pinchStartDist));
+    } else if(e.touches.length === 1 && scale > 1 && touchStartX !== null){
+      e.preventDefault();
+      tx = panStartTx + (e.touches[0].clientX - touchStartX);
+      ty = panStartTy + (e.touches[0].clientY - touchStartY);
+      applyTransform();
+    }
+  }, {passive:false});
+
+  document.querySelector('main').addEventListener('touchend', e => {
+    if(pinchStartDist !== null && e.touches.length < 2) pinchStartDist = null;
+    if(scale <= 1 && touchStartX !== null && e.changedTouches.length){
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if(dx > 50) prev();
+      else if(dx < -50) next();
+    }
+    touchStartX = null; touchStartY = null;
+  });
+})();
+</script>
+</body>
+</html>
