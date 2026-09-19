@@ -21,6 +21,8 @@
   header{
     padding:10px 16px; background:var(--panel); display:flex; align-items:center; gap:12px;
     flex-wrap:wrap; border-bottom:1px solid rgba(128,128,128,.2);
+    position:fixed; top:0; left:0; right:0; z-index:20;
+    transition: transform .3s ease, opacity .3s ease;
   }
   header h1{ font-size:15px; margin:0; font-weight:600; white-space:nowrap; }
   .spacer{flex:1}
@@ -50,7 +52,7 @@
     max-width:100vh; max-height:100vw;
   }
   .rotate-controls{
-    position:absolute; top:10px; right:10px; display:flex; gap:6px; z-index:2;
+    position:absolute; top:84px; right:10px; display:flex; gap:6px; z-index:2;
   }
   .rotate-controls button{
     background:rgba(0,0,0,.45); color:#fff; border:none; width:34px; height:34px;
@@ -74,17 +76,15 @@
   #empty{ color:var(--muted); text-align:center; padding:20px; line-height:1.8; }
   #empty b{ color:var(--text); }
 
-  /* 全螢幕沉浸模式：上下工具列可自動隱藏 */
+  /* 沉浸模式：無動作時上下工具列自動隱藏（全螢幕與一般瀏覽都適用） */
   body.fs #thumbs{ display:none; }
-  body.fs header, body.fs footer{
-    position:fixed; left:0; right:0; z-index:20;
-    transition: transform .25s ease, opacity .25s ease;
-  }
-  body.fs header{ top:0; }
-  body.fs footer{ bottom:0; }
-  body.fs.bars-hidden header{ transform:translateY(-100%); opacity:0; pointer-events:none; }
-  body.fs.bars-hidden footer{ transform:translateY(100%); opacity:0; pointer-events:none; }
+  body.bars-hidden header{ transform:translateY(-100%); opacity:0; pointer-events:none; }
+  body.bars-hidden #bottomBar{ transform:translateY(100%); opacity:0; pointer-events:none; }
 
+  #bottomBar{
+    position:fixed; left:0; right:0; bottom:0; z-index:20;
+    transition: transform .3s ease, opacity .3s ease;
+  }
   footer{
     padding:8px 16px; background:var(--panel); display:flex; align-items:center; gap:12px;
     border-top:1px solid rgba(128,128,128,.2); font-size:12px; color:var(--muted);
@@ -113,6 +113,8 @@
   <input id="folderInput" type="file" webkitdirectory directory multiple>
   <label class="btn secondary" for="fileInput">或選多個檔案</label>
   <input id="fileInput" type="file" multiple accept="image/*">
+  <label class="btn secondary" for="addMoreInput">+ 加入更多</label>
+  <input id="addMoreInput" type="file" multiple accept="image/*">
   <span class="spacer"></span>
   <span id="status">尚未載入圖片</span>
 </header>
@@ -139,6 +141,7 @@
   </div>
 </main>
 
+<div id="bottomBar">
 <footer>
   <button class="secondary" id="prevBtn" disabled>◀ 上一張</button>
   <span id="filename"></span>
@@ -148,6 +151,7 @@
 </footer>
 
 <div id="thumbs"></div>
+</div>
 
 <script>
 (function(){
@@ -194,6 +198,37 @@
     nextBtn.disabled = false;
   }
 
+  function mergeFiles(fileList){
+    const incoming = Array.from(fileList).filter(f => IMG_RE.test(f.name));
+    if(incoming.length === 0){
+      statusEl.textContent = '找不到圖片檔案 (webp/png/jpg/gif)';
+      return;
+    }
+    if(files.length === 0){ loadFiles(fileList); return; } // 尚未載入過，等同於一般載入
+
+    const currentName = files[index] ? files[index].name : null;
+    const existingNames = new Set(files.map(f => f.name));
+    const trulyNew = incoming.filter(f => !existingNames.has(f.name));
+    if(trulyNew.length === 0){
+      statusEl.textContent = '這些檔案已經在清單中了';
+      return;
+    }
+    const newUrls = trulyNew.map(f => URL.createObjectURL(f));
+
+    const combined = files.map((f,i) => ({file:f, url:urls[i], rot:rotations[i] || 0}))
+      .concat(trulyNew.map((f,i) => ({file:f, url:newUrls[i], rot:0})));
+    combined.sort((a,b) => naturalSort(a.file, b.file));
+
+    files = combined.map(c => c.file);
+    urls = combined.map(c => c.url);
+    rotations = combined.map(c => c.rot);
+    index = currentName ? Math.max(0, files.findIndex(f => f.name === currentName)) : 0;
+
+    statusEl.textContent = `已載入 ${files.length} 張圖片（新增 ${trulyNew.length} 張）`;
+    buildThumbs();
+    render();
+  }
+
   function buildThumbs(){
     thumbsEl.innerHTML = '';
     urls.forEach((u,i) => {
@@ -229,6 +264,7 @@
 
     prevBtn.disabled = index === 0;
     nextBtn.disabled = index === files.length - 1;
+    scheduleHide();
   }
 
   function next(){ if(index < files.length - 1){ index++; render(); } }
@@ -255,8 +291,8 @@
   }
   function zoomBy(delta){ setZoom(scale + delta); }
 
-  document.getElementById('zoomInBtn').addEventListener('click', () => zoomBy(0.5));
-  document.getElementById('zoomOutBtn').addEventListener('click', () => zoomBy(-0.5));
+  document.getElementById('zoomInBtn').addEventListener('click', () => zoomBy(0.15));
+  document.getElementById('zoomOutBtn').addEventListener('click', () => zoomBy(-0.15));
   document.getElementById('zoomResetBtn').addEventListener('click', () => setZoom(1));
 
   stage.addEventListener('dblclick', () => setZoom(scale > 1 ? 1 : 2));
@@ -265,7 +301,7 @@
   stage.addEventListener('wheel', e => {
     if(e.ctrlKey || e.metaKey){
       e.preventDefault();
-      zoomBy(e.deltaY < 0 ? 0.25 : -0.25);
+      zoomBy(e.deltaY < 0 ? 0.08 : -0.08);
     }
   }, {passive:false});
 
@@ -298,28 +334,50 @@
     }
   }
 
-  // 全螢幕沉浸模式：無動作時自動隱藏上下工具列
-  let hideTimer = null;
-  function showBars(){
-    document.body.classList.remove('bars-hidden');
+  // 沉浸模式：無動作時自動隱藏上下工具列（全螢幕與一般瀏覽都適用）；
+  // 全螢幕下 2.5 秒後隱藏，一般瀏覽下 5 秒後隱藏，尚未載入圖片時不隱藏。
+  // 只有滑鼠靠近上緣或下緣「持續約1秒」後才會重新浮現，避免亂晃就跳出來
+  const EDGE_PX = 64;
+  let hideTimer = null, edgeTimer = null;
+
+  function hideDelayMs(){ return document.fullscreenElement ? 2500 : 5000; }
+  function scheduleHide(){
     clearTimeout(hideTimer);
-    if(document.fullscreenElement){
-      hideTimer = setTimeout(() => document.body.classList.add('bars-hidden'), 2500);
-    }
+    if(files.length === 0) return; // 尚未載入圖片時，保持工具列常駐
+    hideTimer = setTimeout(() => document.body.classList.add('bars-hidden'), hideDelayMs());
+  }
+  function revealBars(){
+    document.body.classList.remove('bars-hidden');
+    scheduleHide();
   }
   document.addEventListener('fullscreenchange', () => {
-    const isFs = !!document.fullscreenElement;
-    document.body.classList.toggle('fs', isFs);
-    if(isFs) showBars(); else { document.body.classList.remove('bars-hidden'); clearTimeout(hideTimer); }
+    document.body.classList.toggle('fs', !!document.fullscreenElement);
+    clearTimeout(edgeTimer); edgeTimer = null;
+    revealBars();
   });
-  document.addEventListener('mousemove', showBars);
-  document.addEventListener('touchstart', showBars, {passive:true});
+  document.addEventListener('mousemove', e => {
+    if(files.length === 0) return;
+    const nearEdge = e.clientY <= EDGE_PX || e.clientY >= window.innerHeight - EDGE_PX;
+    if(nearEdge){
+      if(document.body.classList.contains('bars-hidden')){
+        if(!edgeTimer) edgeTimer = setTimeout(() => { revealBars(); edgeTimer = null; }, 1000);
+      } else {
+        scheduleHide(); // 已顯示中，靠近邊緣時延後自動隱藏
+      }
+    } else if(edgeTimer){
+      clearTimeout(edgeTimer); edgeTimer = null;
+    }
+  });
+  document.addEventListener('touchstart', () => {
+    if(files.length > 0) revealBars();
+  }, {passive:true});
 
   document.getElementById('rotLeftBtn').addEventListener('click', () => rotate(-90));
   document.getElementById('rotRightBtn').addEventListener('click', () => rotate(90));
 
   document.getElementById('folderInput').addEventListener('change', e => loadFiles(e.target.files));
   document.getElementById('fileInput').addEventListener('change', e => loadFiles(e.target.files));
+  document.getElementById('addMoreInput').addEventListener('change', e => mergeFiles(e.target.files));
   prevBtn.addEventListener('click', prev);
   nextBtn.addEventListener('click', next);
   document.getElementById('prevZone').addEventListener('click', prev);
@@ -329,8 +387,8 @@
     if(e.key === 'ArrowRight') next();
     if(e.key === 'ArrowLeft') prev();
     if(e.key === 'r' || e.key === 'R'){ e.shiftKey ? rotate(90) : rotate(-90); }
-    if(e.key === '+' || e.key === '=') zoomBy(0.5);
-    if(e.key === '-' || e.key === '_') zoomBy(-0.5);
+    if(e.key === '+' || e.key === '=') zoomBy(0.15);
+    if(e.key === '-' || e.key === '_') zoomBy(-0.15);
     if(e.key === '0') setZoom(1);
     if(e.key === 'f' || e.key === 'F') toggleFullscreen();
   });
