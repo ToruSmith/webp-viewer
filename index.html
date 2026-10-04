@@ -167,7 +167,9 @@
   let urls = [];
   let index = 0;
   let rotations = []; // 每張圖片各自的旋轉角度 (0/90/180/270)
-  let scale = 1, tx = 0, ty = 0; // 縮放與平移，切換圖片時重設
+  let zooms = [];      // 每張圖片各自的縮放倍率
+  let pans = [];        // 每張圖片各自的平移位置 {x,y}
+  let scale = 1, tx = 0, ty = 0; // 目前這張的縮放與平移（來自上面兩個陣列）
   const mainEl = document.getElementById('mainEl');
 
   const stage = document.getElementById('stage');
@@ -198,6 +200,8 @@
     files = arr;
     urls = files.map(f => URL.createObjectURL(f));
     rotations = files.map(() => 0);
+    zooms = files.map(() => 1);
+    pans = files.map(() => ({x:0, y:0}));
     index = 0;
     statusEl.textContent = `已載入 ${files.length} 張圖片`;
     buildThumbs();
@@ -223,13 +227,15 @@
     }
     const newUrls = trulyNew.map(f => URL.createObjectURL(f));
 
-    const combined = files.map((f,i) => ({file:f, url:urls[i], rot:rotations[i] || 0}))
-      .concat(trulyNew.map((f,i) => ({file:f, url:newUrls[i], rot:0})));
+    const combined = files.map((f,i) => ({file:f, url:urls[i], rot:rotations[i] || 0, zoom:zooms[i] || 1, pan:pans[i] || {x:0,y:0}}))
+      .concat(trulyNew.map((f,i) => ({file:f, url:newUrls[i], rot:0, zoom:1, pan:{x:0,y:0}})));
     combined.sort((a,b) => naturalSort(a.file, b.file));
 
     files = combined.map(c => c.file);
     urls = combined.map(c => c.url);
     rotations = combined.map(c => c.rot);
+    zooms = combined.map(c => c.zoom);
+    pans = combined.map(c => c.pan);
     index = currentName ? Math.max(0, files.findIndex(f => f.name === currentName)) : 0;
 
     statusEl.textContent = `已載入 ${files.length} 張圖片（新增 ${trulyNew.length} 張）`;
@@ -267,6 +273,8 @@
     files.splice(i, 1);
     urls.splice(i, 1);
     rotations.splice(i, 1);
+    zooms.splice(i, 1);
+    pans.splice(i, 1);
 
     if(files.length === 0){
       index = 0;
@@ -304,7 +312,9 @@
     img.alt = files[index].name;
     img.className = 'zoomable';
     stage.appendChild(img);
-    scale = 1; tx = 0; ty = 0;
+    scale = zooms[index] || 1;
+    tx = (pans[index] && pans[index].x) || 0;
+    ty = (pans[index] && pans[index].y) || 0;
     applyTransform();
     bindDrag(img);
 
@@ -329,6 +339,7 @@
   function applyTransform(){
     const img = stage.querySelector('img');
     if(!img) return;
+    if(files.length > 0){ zooms[index] = scale; pans[index] = {x:tx, y:ty}; }
     const deg = rotations[index] || 0;
     img.style.transform = `translate(${tx}px, ${ty}px) rotate(${deg}deg) scale(${scale})`;
     stage.classList.toggle('rot90', deg === 90 || deg === 270);
