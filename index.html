@@ -48,12 +48,22 @@
     box-shadow:0 4px 24px rgba(0,0,0,.3);
     transition:transform .15s ease;
   }
-  #stage.rot90 img, #stage.rot270 img{
-    max-width:100vh; max-height:100vw;
-  }
   .rotate-controls{
     position:absolute; top:84px; right:10px; display:flex; gap:6px; z-index:2;
   }
+  #finePanel{
+    position:absolute; top:128px; right:10px; z-index:2; background:rgba(0,0,0,.55);
+    backdrop-filter:blur(4px); border-radius:10px; padding:10px 12px; display:none;
+    flex-direction:column; gap:6px; width:200px; color:#fff; font-size:12px;
+  }
+  #finePanel.open{ display:flex; }
+  #finePanel .row{ display:flex; align-items:center; gap:8px; }
+  #finePanel input[type=range]{ flex:1; }
+  #finePanel button{
+    background:rgba(255,255,255,.15); color:#fff; border:none; border-radius:6px;
+    padding:3px 8px; font-size:11px; cursor:pointer;
+  }
+  #fineAngleLabel{ min-width:42px; text-align:right; }
   .rotate-controls button{
     background:rgba(0,0,0,.45); color:#fff; border:none; width:34px; height:34px;
     border-radius:50%; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center;
@@ -137,8 +147,9 @@
   <div class="nav-zone left" id="prevZone">‹</div>
   <div class="nav-zone right" id="nextZone">›</div>
   <div class="rotate-controls">
-    <button id="rotLeftBtn" title="逆時針旋轉 (快捷鍵 R)">⟲</button>
-    <button id="rotRightBtn" title="順時針旋轉 (快捷鍵 Shift+R)">⟳</button>
+    <button id="rotLeftBtn" title="逆時針旋轉 90° (快捷鍵 R)">⟲</button>
+    <button id="rotRightBtn" title="順時針旋轉 90° (快捷鍵 Shift+R)">⟳</button>
+    <button id="fineRotBtn" title="微調旋轉角度 (快捷鍵 T)">📐</button>
     <div class="divider"></div>
     <button id="zoomOutBtn" title="縮小 (快捷鍵 -)">−</button>
     <button id="zoomInBtn" title="放大 (快捷鍵 +)">+</button>
@@ -146,6 +157,18 @@
     <div class="divider"></div>
     <button id="removeBtn" title="從清單移除目前圖片 (快捷鍵 Delete，不會刪除電腦上的檔案)">🗑</button>
     <button id="fullscreenBtn" title="全螢幕 (快捷鍵 F)">⛶</button>
+  </div>
+  <div id="finePanel">
+    <div class="row">
+      <span>微調角度</span>
+      <span id="fineAngleLabel">0.0°</span>
+    </div>
+    <div class="row">
+      <input type="range" id="fineAngleSlider" min="-45" max="45" step="0.5" value="0">
+    </div>
+    <div class="row">
+      <button id="fineResetBtn">重設為 0°</button>
+    </div>
   </div>
 </main>
 
@@ -167,6 +190,7 @@
   let urls = [];
   let index = 0;
   let rotations = []; // 每張圖片各自的旋轉角度 (0/90/180/270)
+  let fineRotations = []; // 每張圖片各自的微調角度 (-45~45，疊加在上面的整數旋轉之上)
   let zooms = [];      // 每張圖片各自的縮放倍率
   let pans = [];        // 每張圖片各自的平移位置 {x,y}
   let scale = 1, tx = 0, ty = 0; // 目前這張的縮放與平移（來自上面兩個陣列）
@@ -181,6 +205,9 @@
   const prevBtn = document.getElementById('prevBtn');
   const nextBtn = document.getElementById('nextBtn');
   const thumbsEl = document.getElementById('thumbs');
+  const finePanel = document.getElementById('finePanel');
+  const fineSlider = document.getElementById('fineAngleSlider');
+  const fineAngleLabel = document.getElementById('fineAngleLabel');
 
   const IMG_RE = /\.(webp|png|jpe?g|gif|bmp|avif)$/i;
 
@@ -200,6 +227,7 @@
     files = arr;
     urls = files.map(f => URL.createObjectURL(f));
     rotations = files.map(() => 0);
+    fineRotations = files.map(() => 0);
     zooms = files.map(() => 1);
     pans = files.map(() => ({x:0, y:0}));
     index = 0;
@@ -227,13 +255,14 @@
     }
     const newUrls = trulyNew.map(f => URL.createObjectURL(f));
 
-    const combined = files.map((f,i) => ({file:f, url:urls[i], rot:rotations[i] || 0, zoom:zooms[i] || 1, pan:pans[i] || {x:0,y:0}}))
-      .concat(trulyNew.map((f,i) => ({file:f, url:newUrls[i], rot:0, zoom:1, pan:{x:0,y:0}})));
+    const combined = files.map((f,i) => ({file:f, url:urls[i], rot:rotations[i] || 0, fine:fineRotations[i] || 0, zoom:zooms[i] || 1, pan:pans[i] || {x:0,y:0}}))
+      .concat(trulyNew.map((f,i) => ({file:f, url:newUrls[i], rot:0, fine:0, zoom:1, pan:{x:0,y:0}})));
     combined.sort((a,b) => naturalSort(a.file, b.file));
 
     files = combined.map(c => c.file);
     urls = combined.map(c => c.url);
     rotations = combined.map(c => c.rot);
+    fineRotations = combined.map(c => c.fine);
     zooms = combined.map(c => c.zoom);
     pans = combined.map(c => c.pan);
     index = currentName ? Math.max(0, files.findIndex(f => f.name === currentName)) : 0;
@@ -273,6 +302,7 @@
     files.splice(i, 1);
     urls.splice(i, 1);
     rotations.splice(i, 1);
+    fineRotations.splice(i, 1);
     zooms.splice(i, 1);
     pans.splice(i, 1);
 
@@ -308,13 +338,16 @@
     empty.style.display = 'none';
     stage.innerHTML = '';
     const img = document.createElement('img');
-    img.src = urls[index];
     img.alt = files[index].name;
     img.className = 'zoomable';
+    img.addEventListener('load', applyTransform); // 圖片實際尺寸出來後，重新計算自動留白縮放
+    img.src = urls[index];
     stage.appendChild(img);
     scale = zooms[index] || 1;
     tx = (pans[index] && pans[index].x) || 0;
     ty = (pans[index] && pans[index].y) || 0;
+    fineSlider.value = fineRotations[index] || 0;
+    fineAngleLabel.textContent = (fineRotations[index] || 0).toFixed(1) + '°';
     applyTransform();
     bindDrag(img);
 
@@ -336,13 +369,24 @@
   function next(){ if(index < files.length - 1){ index++; render(); } }
   function prev(){ if(index > 0){ index--; render(); } }
 
+  // 計算旋轉後要縮多小才不會被裁切（自動留白）：
+  // 取得旋轉前(0deg)的包覆框 w,h，與容器 cw,ch，算出旋轉 deg 後所需的最小縮放倍率
+  function computeFitScale(deg, w, h, cw, ch){
+    if(!w || !h || !cw || !ch) return 1;
+    const rad = deg * Math.PI / 180;
+    const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+    const neededW = w * c + h * s;
+    const neededH = w * s + h * c;
+    return Math.min(1, cw / neededW, ch / neededH);
+  }
+
   function applyTransform(){
     const img = stage.querySelector('img');
     if(!img) return;
     if(files.length > 0){ zooms[index] = scale; pans[index] = {x:tx, y:ty}; }
-    const deg = rotations[index] || 0;
-    img.style.transform = `translate(${tx}px, ${ty}px) rotate(${deg}deg) scale(${scale})`;
-    stage.classList.toggle('rot90', deg === 90 || deg === 270);
+    const deg = (rotations[index] || 0) + (fineRotations[index] || 0);
+    const fit = computeFitScale(deg, img.offsetWidth, img.offsetHeight, stage.clientWidth, stage.clientHeight);
+    img.style.transform = `translate(${tx}px, ${ty}px) rotate(${deg}deg) scale(${scale * fit})`;
     stage.classList.toggle('can-pan', scale > 1);
     mainEl.classList.toggle('zoomed', scale > 1);
   }
@@ -350,6 +394,17 @@
     if(files.length === 0) return;
     rotations[index] = ((rotations[index] || 0) + delta + 360) % 360;
     applyTransform();
+  }
+  function setFineAngle(deg){
+    if(files.length === 0) return;
+    fineRotations[index] = Math.min(45, Math.max(-45, deg));
+    fineAngleLabel.textContent = fineRotations[index].toFixed(1) + '°';
+    fineSlider.value = fineRotations[index];
+    applyTransform();
+  }
+  function toggleFinePanel(){
+    if(files.length === 0) return;
+    finePanel.classList.toggle('open');
   }
   function setZoom(newScale){
     scale = Math.min(4, Math.max(1, newScale));
@@ -362,6 +417,9 @@
   document.getElementById('zoomOutBtn').addEventListener('click', () => zoomBy(-0.15));
   document.getElementById('zoomResetBtn').addEventListener('click', () => setZoom(1));
   document.getElementById('removeBtn').addEventListener('click', removeCurrent);
+  document.getElementById('fineRotBtn').addEventListener('click', toggleFinePanel);
+  fineSlider.addEventListener('input', () => setFineAngle(parseFloat(fineSlider.value)));
+  document.getElementById('fineResetBtn').addEventListener('click', () => setFineAngle(0));
 
   stage.addEventListener('dblclick', () => setZoom(scale > 1 ? 1 : 2));
 
@@ -440,6 +498,8 @@
     if(files.length > 0) revealBars();
   }, {passive:true});
 
+  window.addEventListener('resize', () => { if(files.length > 0) applyTransform(); });
+
   document.getElementById('rotLeftBtn').addEventListener('click', () => rotate(-90));
   document.getElementById('rotRightBtn').addEventListener('click', () => rotate(90));
 
@@ -460,6 +520,7 @@
     if(e.key === '0') setZoom(1);
     if(e.key === 'f' || e.key === 'F') toggleFullscreen();
     if(e.key === 'Delete') removeCurrent();
+    if(e.key === 't' || e.key === 'T') toggleFinePanel();
   });
 
   let wheelLock = false;
