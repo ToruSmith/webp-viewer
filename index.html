@@ -98,11 +98,18 @@
     display:flex; gap:6px; overflow-x:auto; padding:8px 16px; background:var(--panel);
     border-top:1px solid rgba(128,128,128,.2);
   }
-  #thumbs img{
+  .thumb-wrap{ position:relative; flex-shrink:0; }
+  .thumb-wrap img{
     width:52px; height:52px; object-fit:cover; border-radius:6px; cursor:pointer; opacity:.5;
-    border:2px solid transparent; flex-shrink:0;
+    border:2px solid transparent; display:block;
   }
-  #thumbs img.active{ opacity:1; border-color:var(--accent); }
+  .thumb-wrap img.active{ opacity:1; border-color:var(--accent); }
+  .thumb-remove{
+    position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
+    background:#e5484d; color:#fff; border:none; font-size:12px; line-height:1; cursor:pointer;
+    display:none; align-items:center; justify-content:center; padding:0;
+  }
+  .thumb-wrap:hover .thumb-remove{ display:flex; }
 </style>
 </head>
 <body>
@@ -137,6 +144,7 @@
     <button id="zoomInBtn" title="放大 (快捷鍵 +)">+</button>
     <button id="zoomResetBtn" title="重設縮放 (快捷鍵 0)">⤢</button>
     <div class="divider"></div>
+    <button id="removeBtn" title="從清單移除目前圖片 (快捷鍵 Delete，不會刪除電腦上的檔案)">🗑</button>
     <button id="fullscreenBtn" title="全螢幕 (快捷鍵 F)">⛶</button>
   </div>
 </main>
@@ -232,13 +240,60 @@
   function buildThumbs(){
     thumbsEl.innerHTML = '';
     urls.forEach((u,i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'thumb-wrap';
+
       const im = document.createElement('img');
       im.src = u;
       im.title = files[i].name;
       im.addEventListener('click', () => { index = i; render(); });
-      thumbsEl.appendChild(im);
+
+      const rm = document.createElement('button');
+      rm.className = 'thumb-remove';
+      rm.textContent = '✕';
+      rm.title = `移除「${files[i].name}」(不會刪除電腦上的檔案)`;
+      rm.addEventListener('click', (e) => { e.stopPropagation(); removeAt(i); });
+
+      wrap.appendChild(im);
+      wrap.appendChild(rm);
+      thumbsEl.appendChild(wrap);
     });
   }
+
+  function removeAt(i){
+    if(i < 0 || i >= files.length) return;
+    const removedName = files[i].name;
+    URL.revokeObjectURL(urls[i]);
+    files.splice(i, 1);
+    urls.splice(i, 1);
+    rotations.splice(i, 1);
+
+    if(files.length === 0){
+      index = 0;
+      stage.innerHTML = '';
+      empty.style.display = '';
+      filenameEl.textContent = '';
+      counterEl.textContent = '';
+      progressBar.style.width = '0%';
+      thumbsEl.innerHTML = '';
+      prevBtn.disabled = true;
+      nextBtn.disabled = true;
+      statusEl.textContent = `已移除「${removedName}」，清單已空`;
+      // 清單空了之後，工具列必須強制常駐顯示，否則沒有圖片時無法再召喚出來
+      clearTimeout(hideTimer); clearTimeout(edgeTimer); edgeTimer = null;
+      document.body.classList.remove('bars-hidden');
+      return;
+    }
+
+    if(i < index) index -= 1;
+    if(index >= files.length) index = files.length - 1;
+    if(index < 0) index = 0;
+
+    statusEl.textContent = `已移除「${removedName}」，剩下 ${files.length} 張`;
+    buildThumbs();
+    render();
+  }
+  function removeCurrent(){ removeAt(index); }
 
   function render(){
     if(files.length === 0) return;
@@ -257,9 +312,10 @@
     counterEl.textContent = `${index+1} / ${files.length}`;
     progressBar.style.width = ((index+1)/files.length*100) + '%';
 
-    [...thumbsEl.children].forEach((el,i) => {
-      el.classList.toggle('active', i === index);
-      if(i === index) el.scrollIntoView({inline:'center', block:'nearest', behavior:'smooth'});
+    [...thumbsEl.children].forEach((wrap,i) => {
+      const im = wrap.querySelector('img');
+      im.classList.toggle('active', i === index);
+      if(i === index) wrap.scrollIntoView({inline:'center', block:'nearest', behavior:'smooth'});
     });
 
     prevBtn.disabled = index === 0;
@@ -294,6 +350,7 @@
   document.getElementById('zoomInBtn').addEventListener('click', () => zoomBy(0.15));
   document.getElementById('zoomOutBtn').addEventListener('click', () => zoomBy(-0.15));
   document.getElementById('zoomResetBtn').addEventListener('click', () => setZoom(1));
+  document.getElementById('removeBtn').addEventListener('click', removeCurrent);
 
   stage.addEventListener('dblclick', () => setZoom(scale > 1 ? 1 : 2));
 
@@ -391,6 +448,7 @@
     if(e.key === '-' || e.key === '_') zoomBy(-0.15);
     if(e.key === '0') setZoom(1);
     if(e.key === 'f' || e.key === 'F') toggleFullscreen();
+    if(e.key === 'Delete') removeCurrent();
   });
 
   let wheelLock = false;
